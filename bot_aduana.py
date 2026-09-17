@@ -44,16 +44,28 @@ def obtener_dims_terminadas_supabase(gestion_filtro: str = None) -> set:
         resp = requests.get(url_rest, headers=headers, timeout=15)
         if resp.status_code == 200:
             for item in resp.json():
-                clave = f"{item['gestion']}-{item['aduana']}-{item['numero_c']}"
+                clave = f"{str(item['gestion']).strip()}-{str(item['aduana']).strip()}-{str(item['numero_c']).strip()}"
                 dims_listas.add(clave)
     except Exception as e:
         print(f"Aviso leyendo Supabase: {e}")
     return dims_listas
 
 def guardar_lote_en_supabase(lista_registros: list):
-    """Envía todos los trámites en un solo POST con respuesta vacía (0 bytes egress)."""
+    """Envía todos los trámites deduplicados por clave única en bloques de 100."""
     if not lista_registros:
         return
+
+    # 1. Deduplicar en memoria para evitar el error 21000 de PostgreSQL
+    registros_unicos = {}
+    for item in lista_registros:
+        clave = (
+            str(item.get("gestion", "")).strip(),
+            str(item.get("aduana", "")).strip(),
+            str(item.get("numero_c", "")).strip()
+        )
+        registros_unicos[clave] = item
+
+    lista_limpia = list(registros_unicos.values())
 
     headers = {
         "apikey": SUPABASE_KEY,
@@ -64,16 +76,29 @@ def guardar_lote_en_supabase(lista_registros: list):
     url_rest = f"{SUPABASE_URL}/rest/v1/monitoreo_aduana?on_conflict=gestion,aduana,numero_c"
     
     tamano_bloque = 100
-    for i in range(0, len(lista_registros), tamano_bloque):
-        bloque = lista_registros[i:i + tamano_bloque]
+    for i in range(0, len(lista_limpia), tamano_bloque):
+        bloque = lista_limpia[i:i + tamano_bloque]
         try:
             resp = requests.post(url_rest, headers=headers, json=bloque, timeout=30)
             if resp.status_code in [200, 201, 204]:
                 print(f"Éxito: Bloque de {len(bloque)} trámites guardado (Egress: ~0 KB).")
             else:
-                print(f"Error Supabase ({resp.status_code}): {resp.text}")
+                print(f"Aviso Supabase ({resp.status_code}): {resp.text}. Reintentando individuales...")
+                # Plan de rescate: si un lote falla por alguna razón, se guardan uno por uno
+                guardar_individuales_rescate(bloque, headers, url_rest)
         except Exception as err:
-            print(f"Error de red Supabase en lote: {err}")
+            print(f"Error de red Supabase en lote: {err}. Reintentando individuales...")
+            guardar_individuales_rescate(bloque, headers, url_rest)
+
+def guardar_individuales_rescate(bloque, headers, url_rest):
+    """Guarda registros uno por uno en caso de contingencia con un bloque completo."""
+    for item in bloque:
+        try:
+            r = requests.post(url_rest, headers=headers, json=[item], timeout=10)
+            if r.status_code not in [200, 201, 204]:
+                print(f"Error guardando trámite {item.get('registro')}: {r.text}")
+        except Exception as e:
+            print(f"Error en trámite {item.get('registro')}: {e}")
 
 def extraer_datos_aduana(page, gestion: str, cod_aduana: str, numero_c: str):
     url_portal = "http://anbsw01.aduana.gob.bo:7601/click/"
@@ -154,14 +179,18 @@ def main():
     completadas = obtener_dims_terminadas_supabase(gestion_filtro)
     print(f"Trámites concluidos detectados en Supabase: {len(completadas)}")
 
+    # Evitamos duplicados desde la misma lista de lectura de Google Sheets
+    tramites_vistos = set()
     tramites_a_consultar = []
+    
     for fila in filas[1:]:
         g = fila[0].strip() if len(fila) > 0 else ""
         a = fila[1].strip() if len(fila) > 1 else ""
         n = fila[2].strip() if len(fila) > 2 else ""
         if g and a and n:
             clave = f"{g}-{a}-{n}"
-            if clave not in completadas:
+            if clave not in completadas and clave not in tramites_vistos:
+                tramites_vistos.add(clave)
                 tramites_a_consultar.append((g, a, n))
 
     if not tramites_a_consultar:
