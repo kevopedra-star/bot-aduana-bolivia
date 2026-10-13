@@ -2,18 +2,18 @@ name: Monitoreo Aduana
 
 on:
   schedule:
-    # Lunes a Viernes: cada 30 min de 08:00 a 20:30 Bolivia (12:00 a 00:30 UTC)
-    - cron: '0,30 12-23 * * 1-5'
-    - cron: '0,30 0 * * 1-5'
+    # 1. LUNES A VIERNES: Cada media hora de 08:05 a 19:35 Bolivia (12:05 a 23:35 UTC)
+    - cron: '5,35 12-23 * * 1-5'
 
-    # Sábados: 12:00 y 16:00 Bolivia (16:00 y 20:00 UTC)
-    - cron: '0 16,20 * * 6'
+    # 1b. LUNES A VIERNES: Cierre a las 20:05 y 20:35 Bolivia (00:05 y 00:35 UTC)
+    - cron: '5,35 0 * * 2-6'
 
-    # Madrugadas: 01:00 AM Bolivia (05:00 UTC) todos los días
-    - cron: '0 5 * * *'
+    # 2. MADRUGADA: Solo 2 veces (01:05 AM y 04:35 AM Bolivia -> 05:05 y 08:35 UTC)
+    - cron: '5 5 * * *'
+    - cron: '35 8 * * *'
 
-    # Madrugadas: 04:30 AM Bolivia (08:30 UTC) todos los días
-    - cron: '30 8 * * *'
+    # 3. SÁBADOS Y DOMINGOS: Solo 2 veces (12:05 PM y 16:05 PM Bolivia -> 16:05 y 20:05 UTC)
+    - cron: '5 16,20 * * 0,6'
 
   workflow_dispatch:
 
